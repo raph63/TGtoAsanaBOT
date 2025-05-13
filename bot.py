@@ -123,6 +123,15 @@ def handle_forwarded_message(update: Update, context):
         sender = "Unknown"
     forward_date = getattr(update.message, 'forward_date', None)
     forward_date_str = forward_date.strftime('%Y-%m-%d %H:%M:%S') if forward_date else "Unknown date"
+    # Store group/channel info if present
+    forward_from_chat_info = None
+    if getattr(update.message, 'forward_from_chat', None):
+        chat = update.message.forward_from_chat
+        forward_from_chat_info = {
+            'title': getattr(chat, 'title', None),
+            'username': getattr(chat, 'username', None),
+            'id': getattr(chat, 'id', None)
+        }
     logger.info(f"Batching for user {user_id}: {message_text}")
     now = time.time()
     if user_id in batch_store:
@@ -130,9 +139,9 @@ def handle_forwarded_message(update: Update, context):
         batch_store[user_id]['last_time'] = now
         batch_store[user_id]['last_message_id'] = update.message.message_id
         batch_store[user_id]['timer'].cancel()
-        # Store sender/date for batch (overwrite with latest)
         batch_store[user_id]['sender'] = sender
         batch_store[user_id]['forward_date_str'] = forward_date_str
+        batch_store[user_id]['forward_from_chat'] = forward_from_chat_info
     else:
         batch_store[user_id] = {
             'messages': [message_text],
@@ -140,7 +149,8 @@ def handle_forwarded_message(update: Update, context):
             'last_message_id': update.message.message_id,
             'timer': None,
             'sender': sender,
-            'forward_date_str': forward_date_str
+            'forward_date_str': forward_date_str,
+            'forward_from_chat': forward_from_chat_info
         }
     timer = threading.Timer(BATCH_TIMEOUT, prompt_for_title_or_use_caption, args=(update, context, user_id))
     batch_store[user_id]['timer'] = timer
@@ -159,6 +169,7 @@ def prompt_for_title_or_use_caption(update, context, user_id):
         user_title = user_last_text['text']
     sender = batch.get('sender', 'Unknown')
     forward_date_str = batch.get('forward_date_str', 'Unknown date')
+    forward_from_chat = batch.get('forward_from_chat', None)
     if use_caption:
         last_message_id = batch['last_message_id']
         message_store[last_message_id] = {
@@ -168,7 +179,8 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             'user_id': user_id,
             'active': True,
             'sender': sender,
-            'forward_date_str': forward_date_str
+            'forward_date_str': forward_date_str,
+            'forward_from_chat': forward_from_chat
         }
         keyboard = [[InlineKeyboardButton(name, callback_data=f"project_{pid}:{last_message_id}")]
                     for name, pid in zip(PROJECT_NAMES, PROJECT_IDS)]
@@ -188,7 +200,8 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             'user_id': user_id,
             'active': True,
             'sender': sender,
-            'forward_date_str': forward_date_str
+            'forward_date_str': forward_date_str,
+            'forward_from_chat': forward_from_chat
         }
         if user_id not in recent_prompts:
             recent_prompts[user_id] = []
@@ -291,18 +304,17 @@ def button_callback(update: Update, context):
     original_text = store.get('text', '')
     sender = store.get('sender', 'Unknown')
     forward_date_str = store.get('forward_date_str', 'Unknown date')
+    forward_from_chat = store.get('forward_from_chat', None)
     # Try to extract group/channel info for link
     group_name = None
     group_link = None
-    if 'forward_from_chat' in store:
-        chat = store['forward_from_chat']
-        group_name = getattr(chat, 'title', None) or getattr(chat, 'username', None)
-        if getattr(chat, 'username', None):
-            group_link = f"https://t.me/{chat.username}"
+    if forward_from_chat:
+        group_name = forward_from_chat.get('title') or forward_from_chat.get('username')
+        if forward_from_chat.get('username'):
+            group_link = f"https://t.me/{forward_from_chat['username']}"
     # Parse each line to add username prefix
     username_prefix = ''
     if sender and sender != 'Unknown':
-        # Try to extract @username from sender string
         m = re.search(r'@([\w_]+)', sender)
         if m:
             username_prefix = f"@{m.group(1)}: "
@@ -319,6 +331,8 @@ def button_callback(update: Update, context):
             forwarded_from_str = f"{group_name} on {forward_date_str}"
     else:
         forwarded_from_str = f"{sender} on {forward_date_str}"
+    # Add a note if per-line usernames are not accurate
+    per_line_note = "\nNOTE: Per-line usernames may not be accurate due to Telegram limitations when forwarding multiple messages. For best results, forward messages individually."
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
@@ -352,6 +366,7 @@ def button_callback(update: Update, context):
             f"------------------------------\n"
             f"FORWARDED FROM: {forwarded_from_str}\n"
             f"------------------------------"
+            f"{per_line_note}"
         )
         task = asana_client.tasks.create_task({
             'name': improved_title,
