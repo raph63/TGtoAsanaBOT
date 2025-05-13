@@ -282,8 +282,10 @@ def button_callback(update: Update, context):
                 {"role": "system", "content": (
                     "You are an assistant that helps create Asana tasks. "
                     "Given a user-suggested title and the original message, "
-                    "gently improve the title (fix typos, grammar, capitalization, but do not rewrite or change the meaning), "
-                    "and generate a concise description (max 50 words). "
+                    "make only the most minimal, surface-level corrections to the title (fix typos, grammar, capitalization). "
+                    "Do NOT rewrite, rephrase, summarize, or change the wording, meaning, or intent of the title. "
+                    "The title should remain as close as possible to the user's original, only fixing obvious errors. "
+                    "Also generate a concise description (max 50 words). "
                     "Return both as JSON: {\"title\": ..., \"description\": ...}"
                 )},
                 {"role": "user", "content": f"User title: {user_title}\nOriginal message: {original_text}"}
