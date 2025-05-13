@@ -367,6 +367,8 @@ def main():
             webhook_url=f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{os.getenv('TELEGRAM_BOT_TOKEN')}"
         )
         logger.info("Bot started in webhook mode")
+        logger.warning(f"TELEGRAM_BOT_TOKEN: {os.getenv('TELEGRAM_BOT_TOKEN')}")
+        logger.warning(f"HEROKU_APP_NAME: {os.getenv('HEROKU_APP_NAME')}")
     else:  # If running locally
         updater.start_polling()
         logger.info("Bot started in polling mode")
