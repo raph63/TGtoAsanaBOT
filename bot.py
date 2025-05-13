@@ -362,7 +362,13 @@ def main():
     dispatcher.add_handler(CallbackQueryHandler(button_callback))
 
     # Start the bot
-    updater.start_polling()
+    port = int(os.environ.get('PORT', 5000))
+    updater.start_webhook(
+        listen='0.0.0.0',
+        port=port,
+        url_path=os.getenv('TELEGRAM_BOT_TOKEN'),
+        webhook_url=f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{os.getenv('TELEGRAM_BOT_TOKEN')}"
+    )
     updater.idle()
 
 if __name__ == '__main__':
