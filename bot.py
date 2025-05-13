@@ -9,6 +9,7 @@ import threading
 import time
 import warnings
 import json
+import re
 
 # Load environment variables
 load_dotenv()
@@ -290,6 +291,34 @@ def button_callback(update: Update, context):
     original_text = store.get('text', '')
     sender = store.get('sender', 'Unknown')
     forward_date_str = store.get('forward_date_str', 'Unknown date')
+    # Try to extract group/channel info for link
+    group_name = None
+    group_link = None
+    if 'forward_from_chat' in store:
+        chat = store['forward_from_chat']
+        group_name = getattr(chat, 'title', None) or getattr(chat, 'username', None)
+        if getattr(chat, 'username', None):
+            group_link = f"https://t.me/{chat.username}"
+    # Parse each line to add username prefix
+    username_prefix = ''
+    if sender and sender != 'Unknown':
+        # Try to extract @username from sender string
+        m = re.search(r'@([\w_]+)', sender)
+        if m:
+            username_prefix = f"@{m.group(1)}: "
+        else:
+            username_prefix = f"{sender}: "
+    else:
+        username_prefix = ''
+    indented_message = '\n'.join([f'{username_prefix}{line}' if line.strip() else '' for line in original_text.splitlines()])
+    # Compose FORWARDED FROM section
+    if group_name:
+        if group_link:
+            forwarded_from_str = f"{group_name} ({group_link}) on {forward_date_str}"
+        else:
+            forwarded_from_str = f"{group_name} on {forward_date_str}"
+    else:
+        forwarded_from_str = f"{sender} on {forward_date_str}"
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
@@ -316,13 +345,12 @@ def button_callback(update: Update, context):
         except Exception:
             improved_title = user_title
             improved_description = ''
-        indented_message = '\n'.join([f'{line}' for line in original_text.splitlines()])
         full_description = (
             f"CONTEXT: \n{improved_description}\n\n"
             f"------------------------------\n"
             f"ORIGINAL TG MESSAGE: \n{indented_message}\n"
             f"------------------------------\n"
-            f"FORWARDED FROM: {sender} on {forward_date_str}\n"
+            f"FORWARDED FROM: {forwarded_from_str}\n"
             f"------------------------------"
         )
         task = asana_client.tasks.create_task({
