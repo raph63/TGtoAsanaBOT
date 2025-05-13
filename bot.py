@@ -22,8 +22,7 @@ asana_client.options['headers'] = {
     "Asana-Enable": "new_user_task_lists,new_goal_memberships"
 }
 openai_client = OpenAI(
-    api_key=os.getenv('OPENAI_API_KEY'),
-    base_url="https://api.openai.com/v1"
+    api_key=os.getenv('OPENAI_API_KEY')
 )
 
 # Get project configuration
