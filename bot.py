@@ -362,15 +362,17 @@ def main():
     # Start the bot
     if os.getenv('HEROKU_APP_NAME'):  # If running on Heroku
         port = int(os.environ.get('PORT', 5000))
+        public_url = os.getenv('HEROKU_PUBLIC_URL')
         updater.start_webhook(
             listen='0.0.0.0',
             port=port,
             url_path=os.getenv('TELEGRAM_BOT_TOKEN'),
-            webhook_url=f"https://{os.getenv('HEROKU_APP_NAME')}.herokuapp.com/{os.getenv('TELEGRAM_BOT_TOKEN')}"
+            webhook_url=f"https://{public_url}/{os.getenv('TELEGRAM_BOT_TOKEN')}"
         )
         logger.info("Bot started in webhook mode")
         logger.warning(f"TELEGRAM_BOT_TOKEN: {os.getenv('TELEGRAM_BOT_TOKEN')}")
         logger.warning(f"HEROKU_APP_NAME: {os.getenv('HEROKU_APP_NAME')}")
+        logger.warning(f"HEROKU_PUBLIC_URL: {public_url}")
         logger.warning(f"Listening on path: /{os.getenv('TELEGRAM_BOT_TOKEN')}")
     else:  # If running locally
         updater.start_polling()
