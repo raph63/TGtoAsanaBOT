@@ -371,6 +371,7 @@ def main():
         updater.start_polling()
         logger.info("Bot started in polling mode")
 
+    logger.warning("Bot entering idle mode")
     updater.idle()
 
 if __name__ == '__main__':
