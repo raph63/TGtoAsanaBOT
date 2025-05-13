@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup
 from telegram.ext import Updater, CommandHandler, MessageHandler, CallbackQueryHandler, Filters
 import asana
-from openai import OpenAI
+import openai
 import threading
 import time
 import warnings
@@ -21,9 +21,7 @@ asana_client = asana.Client.access_token(os.getenv('ASANA_PAT'))
 asana_client.options['headers'] = {
     "Asana-Enable": "new_user_task_lists,new_goal_memberships"
 }
-openai_client = OpenAI(
-    api_key=os.getenv('OPENAI_API_KEY')
-)
+openai.api_key = os.getenv('OPENAI_API_KEY')
 
 # Get project configuration
 PROJECT_IDS = os.getenv('ASANA_PROJECT_IDS', '').split(',')
@@ -273,7 +271,7 @@ def button_callback(update: Update, context):
     original_text = store.get('text', '')
     try:
         # Use OpenAI to gently improve the title and generate the description
-        response = openai_client.chat.completions.create(
+        response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
                 {"role": "system", "content": (
@@ -287,8 +285,7 @@ def button_callback(update: Update, context):
             ],
             max_tokens=100
         )
-        import json
-        ai_result = response.choices[0].message.content.strip()
+        ai_result = response.choices[0].message['content'].strip()
         try:
             ai_json = json.loads(ai_result)
             improved_title = ai_json.get('title', user_title)
