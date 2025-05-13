@@ -8,6 +8,7 @@ import openai
 import threading
 import time
 import warnings
+import json
 
 # Load environment variables
 load_dotenv()
@@ -286,6 +287,7 @@ def button_callback(update: Update, context):
             max_tokens=100
         )
         ai_result = response.choices[0].message['content'].strip()
+        logger.warning(f"OpenAI raw response: {ai_result}")
         try:
             ai_json = json.loads(ai_result)
             improved_title = ai_json.get('title', user_title)
