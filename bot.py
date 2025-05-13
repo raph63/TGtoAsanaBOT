@@ -89,10 +89,14 @@ def handle_menu_option(update: Update, context):
 
 def handle_forwarded_message(update: Update, context):
     print("handle_forwarded_message called")
-    # Accept if message is forwarded from a user or a chat (channel)
-    is_forwarded = bool(getattr(update.message, 'forward_from', None) or getattr(update.message, 'forward_from_chat', None))
+    # Accept if message is forwarded from a user, a chat (channel), or has a forward_date (robust to privacy settings)
+    is_forwarded = bool(
+        getattr(update.message, 'forward_from', None) or 
+        getattr(update.message, 'forward_from_chat', None) or 
+        getattr(update.message, 'forward_date', None)
+    )
     if not is_forwarded:
-        logger.warning("Message is not forwarded (no forward_from or forward_from_chat).")
+        logger.warning("Message is not forwarded (no forward_from, forward_from_chat, or forward_date).")
         try:
             update.message.reply_text("Please forward a message to create a task.")
         except Exception as e:
