@@ -89,7 +89,6 @@ def handle_menu_option(update: Update, context):
 
 def handle_forwarded_message(update: Update, context):
     print("handle_forwarded_message called")
-    # Accept if message is forwarded from a user, a chat (channel), or has a forward_date (robust to privacy settings)
     is_forwarded = bool(
         getattr(update.message, 'forward_from', None) or 
         getattr(update.message, 'forward_from_chat', None) or 
@@ -103,7 +102,6 @@ def handle_forwarded_message(update: Update, context):
             logger.error(f"Error sending not-forwarded reply: {e}")
         return
     user_id = update.message.from_user.id
-    # Accept text, caption, or document caption
     message_text = update.message.text or update.message.caption or ""
     if not message_text:
         logger.warning("Forwarded message has no text or caption.")
@@ -112,23 +110,37 @@ def handle_forwarded_message(update: Update, context):
         except Exception as e:
             logger.error(f"Error sending no-text reply: {e}")
         return
+    # Extract sender info and date
+    sender = None
+    if getattr(update.message, 'forward_from', None):
+        sender = update.message.forward_from.full_name
+        if update.message.forward_from.username:
+            sender += f" (@{update.message.forward_from.username})"
+    elif getattr(update.message, 'forward_from_chat', None):
+        sender = update.message.forward_from_chat.title or update.message.forward_from_chat.username or "Unknown Chat"
+    else:
+        sender = "Unknown"
+    forward_date = getattr(update.message, 'forward_date', None)
+    forward_date_str = forward_date.strftime('%Y-%m-%d %H:%M:%S') if forward_date else "Unknown date"
     logger.info(f"Batching for user {user_id}: {message_text}")
     now = time.time()
-    # If user has an active batch, append; else, start new batch
     if user_id in batch_store:
         batch_store[user_id]['messages'].append(message_text)
         batch_store[user_id]['last_time'] = now
         batch_store[user_id]['last_message_id'] = update.message.message_id
-        # Reset timer
         batch_store[user_id]['timer'].cancel()
+        # Store sender/date for batch (overwrite with latest)
+        batch_store[user_id]['sender'] = sender
+        batch_store[user_id]['forward_date_str'] = forward_date_str
     else:
         batch_store[user_id] = {
             'messages': [message_text],
             'last_time': now,
             'last_message_id': update.message.message_id,
-            'timer': None
+            'timer': None,
+            'sender': sender,
+            'forward_date_str': forward_date_str
         }
-    # Start new timer
     timer = threading.Timer(BATCH_TIMEOUT, prompt_for_title_or_use_caption, args=(update, context, user_id))
     batch_store[user_id]['timer'] = timer
     timer.start()
@@ -138,22 +150,24 @@ def prompt_for_title_or_use_caption(update, context, user_id):
     if not batch:
         return
     all_text = '\n'.join(batch['messages'])
-    # Check for recent text message as caption/title
     user_last_text = last_text_message.get(user_id)
     use_caption = False
     user_title = None
     if user_last_text and (batch['last_time'] - user_last_text['timestamp'] <= 5):
         use_caption = True
         user_title = user_last_text['text']
+    sender = batch.get('sender', 'Unknown')
+    forward_date_str = batch.get('forward_date_str', 'Unknown date')
     if use_caption:
-        # Store in message_store and go straight to project selection
         last_message_id = batch['last_message_id']
         message_store[last_message_id] = {
             'text': all_text,
             'user_title': user_title,
             'state': 'awaiting_project',
             'user_id': user_id,
-            'active': True
+            'active': True,
+            'sender': sender,
+            'forward_date_str': forward_date_str
         }
         keyboard = [[InlineKeyboardButton(name, callback_data=f"project_{pid}:{last_message_id}")]
                     for name, pid in zip(PROJECT_NAMES, PROJECT_IDS)]
@@ -163,7 +177,6 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
-        # Prompt for title as before
         sent = context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="What should the title of the Asana task be?\n(Reply to this message with your title.)"
@@ -172,7 +185,9 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             'text': all_text,
             'state': 'awaiting_title',
             'user_id': user_id,
-            'active': True
+            'active': True,
+            'sender': sender,
+            'forward_date_str': forward_date_str
         }
         if user_id not in recent_prompts:
             recent_prompts[user_id] = []
@@ -264,7 +279,6 @@ def button_callback(update: Update, context):
         logger.error(f"Error parsing callback data: {e}")
         query.edit_message_text("Error: Invalid callback data.")
         return
-    # Retrieve stored info
     store = message_store.get(original_message_id)
     if not store:
         query.edit_message_text("Error: Message not found.")
@@ -274,8 +288,9 @@ def button_callback(update: Update, context):
         return
     user_title = store.get('user_title', '')
     original_text = store.get('text', '')
+    sender = store.get('sender', 'Unknown')
+    forward_date_str = store.get('forward_date_str', 'Unknown date')
     try:
-        # Use OpenAI to gently improve the title and generate the description
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
             messages=[
@@ -301,24 +316,22 @@ def button_callback(update: Update, context):
         except Exception:
             improved_title = user_title
             improved_description = ''
-        # Format description for Asana: bold subtitles (ALL CAPS) and lines for quotes
         indented_message = '\n'.join([f'{line}' for line in original_text.splitlines()])
         full_description = (
             f"CONTEXT: \n{improved_description}\n\n"
             f"------------------------------\n"
             f"ORIGINAL TG MESSAGE: \n{indented_message}\n"
+            f"------------------------------\n"
+            f"FORWARDED FROM: {sender} on {forward_date_str}\n"
             f"------------------------------"
         )
-        # Create Asana task
         task = asana_client.tasks.create_task({
             'name': improved_title,
             'notes': full_description,
             'projects': [project_id]
         })
-        # Send confirmation with task link
         task_url = f"https://app.asana.com/0/{project_id}/{task['gid']}"
         query.edit_message_text(f"✅ Task created: {task_url}")
-        # Clean up
         store['active'] = False
         user_id = store.get('user_id')
         if user_id in recent_prompts:
