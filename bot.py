@@ -337,8 +337,7 @@ def button_callback(update: Update, context):
             forwarded_from_str = f"{group_name} on {forward_date_str}"
     else:
         forwarded_from_str = f"{sender} on {forward_date_str}"
-    # Add a note if per-line usernames are not accurate
-    per_line_note = "\nNOTE: Per-line usernames may not be accurate due to Telegram limitations when forwarding multiple messages. For best results, forward messages individually."
+    # Remove the per-line username note from the description
     try:
         response = openai.ChatCompletion.create(
             model="gpt-3.5-turbo",
@@ -372,7 +371,6 @@ def button_callback(update: Update, context):
             f"------------------------------\n"
             f"FORWARDED FROM: {forwarded_from_str}\n"
             f"------------------------------"
-            f"{per_line_note}"
         )
         task = asana_client.tasks.create_task({
             'name': improved_title,
