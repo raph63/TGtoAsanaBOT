@@ -132,8 +132,15 @@ def handle_forwarded_message(update: Update, context):
             'username': getattr(chat, 'username', None),
             'id': getattr(chat, 'id', None)
         }
-    logger.info(f"Batching for user {user_id}: {message_text}")
+    # Find the most recent non-forwarded message from this user (for title)
+    user_last_text = last_text_message.get(user_id)
     now = time.time()
+    use_caption = False
+    user_title = None
+    if user_last_text and (now - user_last_text['timestamp'] <= 60):  # 60s window for robustness
+        use_caption = True
+        user_title = user_last_text['text']
+    logger.info(f"Batching for user {user_id}: {message_text}")
     if user_id in batch_store:
         batch_store[user_id]['messages'].append(message_text)
         batch_store[user_id]['last_time'] = now
@@ -142,6 +149,7 @@ def handle_forwarded_message(update: Update, context):
         batch_store[user_id]['sender'] = sender
         batch_store[user_id]['forward_date_str'] = forward_date_str
         batch_store[user_id]['forward_from_chat'] = forward_from_chat_info
+        batch_store[user_id]['user_title'] = user_title if use_caption else None
     else:
         batch_store[user_id] = {
             'messages': [message_text],
@@ -150,7 +158,8 @@ def handle_forwarded_message(update: Update, context):
             'timer': None,
             'sender': sender,
             'forward_date_str': forward_date_str,
-            'forward_from_chat': forward_from_chat_info
+            'forward_from_chat': forward_from_chat_info,
+            'user_title': user_title if use_caption else None
         }
     timer = threading.Timer(BATCH_TIMEOUT, prompt_for_title_or_use_caption, args=(update, context, user_id))
     batch_store[user_id]['timer'] = timer
@@ -161,16 +170,12 @@ def prompt_for_title_or_use_caption(update, context, user_id):
     if not batch:
         return
     all_text = '\n'.join(batch['messages'])
-    user_last_text = last_text_message.get(user_id)
-    use_caption = False
-    user_title = None
-    if user_last_text and (batch['last_time'] - user_last_text['timestamp'] <= 5):
-        use_caption = True
-        user_title = user_last_text['text']
     sender = batch.get('sender', 'Unknown')
     forward_date_str = batch.get('forward_date_str', 'Unknown date')
     forward_from_chat = batch.get('forward_from_chat', None)
-    if use_caption:
+    user_title = batch.get('user_title', None)
+    if user_title:
+        # Store in message_store and go straight to project selection
         last_message_id = batch['last_message_id']
         message_store[last_message_id] = {
             'text': all_text,
@@ -190,6 +195,7 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             reply_markup=InlineKeyboardMarkup(keyboard)
         )
     else:
+        # Prompt for title as before
         sent = context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="What should the title of the Asana task be?\n(Reply to this message with your title.)"
@@ -209,7 +215,7 @@ def prompt_for_title_or_use_caption(update, context, user_id):
         if len(recent_prompts[user_id]) > MAX_RECENT_PROMPTS:
             recent_prompts[user_id] = recent_prompts[user_id][-MAX_RECENT_PROMPTS:]
     del batch_store[user_id]
-    logger.info(f"Prompted user {user_id} for title or used caption. Caption used: {use_caption}")
+    logger.info(f"Prompted user {user_id} for title or used caption. Caption used: {user_title is not None}")
 
 def handle_title_reply(update: Update, context):
     logger.info(f"handle_title_reply called. Message: {update.message}")
