@@ -104,13 +104,26 @@ def handle_forwarded_message(update: Update, context):
         return
     user_id = update.message.from_user.id
     message_text = update.message.text or update.message.caption or ""
-    if not message_text:
-        logger.warning("Forwarded message has no text or caption.")
+    document_info = None
+    if update.message.document:
+        document = update.message.document
+        document_info = {
+            'file_id': document.file_id,
+            'file_name': document.file_name,
+            'mime_type': document.mime_type,
+            'file_size': document.file_size
+        }
+    # If no text/caption but there is a document, treat as valid
+    if not message_text and not document_info:
+        logger.warning("Forwarded message has no text, caption, or document.")
         try:
             update.message.reply_text("Please forward a text message or a media message with a caption.")
         except Exception as e:
             logger.error(f"Error sending no-text reply: {e}")
         return
+    # If only document, use filename as placeholder text
+    if not message_text and document_info:
+        message_text = f"[Document: {document_info['file_name']}]"
     # Extract sender info and date
     sender = None
     if getattr(update.message, 'forward_from', None):
@@ -150,6 +163,11 @@ def handle_forwarded_message(update: Update, context):
         batch_store[user_id]['forward_date_str'] = forward_date_str
         batch_store[user_id]['forward_from_chat'] = forward_from_chat_info
         batch_store[user_id]['user_title'] = user_title if use_caption else None
+        # Store document info if present
+        if document_info:
+            if 'documents' not in batch_store[user_id]:
+                batch_store[user_id]['documents'] = []
+            batch_store[user_id]['documents'].append(document_info)
     else:
         batch_store[user_id] = {
             'messages': [message_text],
@@ -159,7 +177,8 @@ def handle_forwarded_message(update: Update, context):
             'sender': sender,
             'forward_date_str': forward_date_str,
             'forward_from_chat': forward_from_chat_info,
-            'user_title': user_title if use_caption else None
+            'user_title': user_title if use_caption else None,
+            'documents': [document_info] if document_info else []
         }
     timer = threading.Timer(BATCH_TIMEOUT, prompt_for_title_or_use_caption, args=(update, context, user_id))
     batch_store[user_id]['timer'] = timer
