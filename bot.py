@@ -10,6 +10,7 @@ import time
 import warnings
 import json
 import re
+import tempfile
 
 # Load environment variables
 load_dotenv()
@@ -193,6 +194,7 @@ def prompt_for_title_or_use_caption(update, context, user_id):
     forward_date_str = batch.get('forward_date_str', 'Unknown date')
     forward_from_chat = batch.get('forward_from_chat', None)
     user_title = batch.get('user_title', None)
+    documents = batch.get('documents', [])
     if user_title:
         # Store in message_store and go straight to project selection
         last_message_id = batch['last_message_id']
@@ -204,7 +206,8 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             'active': True,
             'sender': sender,
             'forward_date_str': forward_date_str,
-            'forward_from_chat': forward_from_chat
+            'forward_from_chat': forward_from_chat,
+            'documents': documents
         }
         keyboard = [[InlineKeyboardButton(name, callback_data=f"project_{pid}:{last_message_id}")]
                     for name, pid in zip(PROJECT_NAMES, PROJECT_IDS)]
@@ -226,7 +229,8 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             'active': True,
             'sender': sender,
             'forward_date_str': forward_date_str,
-            'forward_from_chat': forward_from_chat
+            'forward_from_chat': forward_from_chat,
+            'documents': documents
         }
         if user_id not in recent_prompts:
             recent_prompts[user_id] = []
@@ -396,6 +400,22 @@ def button_callback(update: Update, context):
             'notes': full_description,
             'projects': [project_id]
         })
+        # Upload all documents as attachments if present
+        documents = store.get('documents', [])
+        attachment_results = []
+        for doc in documents:
+            try:
+                tg_file = context.bot.get_file(doc['file_id'])
+                with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(doc['file_name'])[1]) as tmp_file:
+                    tg_file.download(custom_path=tmp_file.name)
+                    tmp_file.flush()
+                    tmp_file.seek(0)
+                    with open(tmp_file.name, 'rb') as f:
+                        asana_client.attachments.create_on_task(task['gid'], file_content=f, file_name=doc['file_name'])
+                    attachment_results.append(doc['file_name'])
+                os.unlink(tmp_file.name)
+            except Exception as e:
+                logger.error(f"Failed to upload document {doc['file_name']} to Asana: {e}")
         task_url = f"https://app.asana.com/0/{project_id}/{task['gid']}"
         query.edit_message_text(f"✅ Task created: {task_url}")
         store['active'] = False
