@@ -106,6 +106,7 @@ def handle_forwarded_message(update: Update, context):
     user_id = update.message.from_user.id
     message_text = update.message.text or update.message.caption or ""
     document_info = None
+    photo_info = None
     if update.message.document:
         document = update.message.document
         document_info = {
@@ -114,17 +115,33 @@ def handle_forwarded_message(update: Update, context):
             'mime_type': document.mime_type,
             'file_size': document.file_size
         }
-    # If no text/caption but there is a document, treat as valid
-    if not message_text and not document_info:
-        logger.warning("Forwarded message has no text, caption, or document.")
+    # Handle photo (image) attachments
+    if update.message.photo:
+        # Get the highest resolution photo
+        photo = update.message.photo[-1]
+        file_id = photo.file_id
+        file_unique_id = photo.file_unique_id
+        # Use a generic filename if none is provided
+        file_name = f"photo_{file_unique_id}.jpg"
+        photo_info = {
+            'file_id': file_id,
+            'file_name': file_name,
+            'mime_type': 'image/jpeg',
+            'file_size': photo.file_size if hasattr(photo, 'file_size') else None
+        }
+    # If no text/caption but there is a document or photo, treat as valid
+    if not message_text and not document_info and not photo_info:
+        logger.warning("Forwarded message has no text, caption, document, or photo.")
         try:
             update.message.reply_text("Please forward a text message or a media message with a caption.")
         except Exception as e:
             logger.error(f"Error sending no-text reply: {e}")
         return
-    # If only document, use filename as placeholder text
+    # If only document or photo, use filename as placeholder text
     if not message_text and document_info:
         message_text = f"[Document: {document_info['file_name']}]"
+    if not message_text and photo_info:
+        message_text = f"[Photo: {photo_info['file_name']}]"
     # Extract sender info and date
     sender = None
     if getattr(update.message, 'forward_from', None):
@@ -169,6 +186,11 @@ def handle_forwarded_message(update: Update, context):
             if 'documents' not in batch_store[user_id]:
                 batch_store[user_id]['documents'] = []
             batch_store[user_id]['documents'].append(document_info)
+        # Store photo info if present
+        if photo_info:
+            if 'photos' not in batch_store[user_id]:
+                batch_store[user_id]['photos'] = []
+            batch_store[user_id]['photos'].append(photo_info)
     else:
         batch_store[user_id] = {
             'messages': [message_text],
@@ -179,7 +201,8 @@ def handle_forwarded_message(update: Update, context):
             'forward_date_str': forward_date_str,
             'forward_from_chat': forward_from_chat_info,
             'user_title': user_title if use_caption else None,
-            'documents': [document_info] if document_info else []
+            'documents': [document_info] if document_info else [],
+            'photos': [photo_info] if photo_info else []
         }
     timer = threading.Timer(BATCH_TIMEOUT, prompt_for_title_or_use_caption, args=(update, context, user_id))
     batch_store[user_id]['timer'] = timer
@@ -195,6 +218,7 @@ def prompt_for_title_or_use_caption(update, context, user_id):
     forward_from_chat = batch.get('forward_from_chat', None)
     user_title = batch.get('user_title', None)
     documents = batch.get('documents', [])
+    photos = batch.get('photos', [])
     if user_title:
         # Store in message_store and go straight to project selection
         last_message_id = batch['last_message_id']
@@ -207,7 +231,8 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             'sender': sender,
             'forward_date_str': forward_date_str,
             'forward_from_chat': forward_from_chat,
-            'documents': documents
+            'documents': documents,
+            'photos': photos
         }
         keyboard = [[InlineKeyboardButton(name, callback_data=f"project_{pid}:{last_message_id}")]
                     for name, pid in zip(PROJECT_NAMES, PROJECT_IDS)]
@@ -230,7 +255,8 @@ def prompt_for_title_or_use_caption(update, context, user_id):
             'sender': sender,
             'forward_date_str': forward_date_str,
             'forward_from_chat': forward_from_chat,
-            'documents': documents
+            'documents': documents,
+            'photos': photos
         }
         if user_id not in recent_prompts:
             recent_prompts[user_id] = []
@@ -402,6 +428,7 @@ def button_callback(update: Update, context):
         })
         # Upload all documents as attachments if present
         documents = store.get('documents', [])
+        photos = store.get('photos', [])
         attachment_results = []
         for doc in documents:
             try:
@@ -416,6 +443,20 @@ def button_callback(update: Update, context):
                 os.unlink(tmp_file.name)
             except Exception as e:
                 logger.error(f"Failed to upload document {doc['file_name']} to Asana: {e}")
+        # Handle photo attachments
+        for photo in photos:
+            try:
+                tg_file = context.bot.get_file(photo['file_id'])
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.jpg') as tmp_file:
+                    tg_file.download(custom_path=tmp_file.name)
+                    tmp_file.flush()
+                    tmp_file.seek(0)
+                    with open(tmp_file.name, 'rb') as f:
+                        asana_client.attachments.create_on_task(task['gid'], file_content=f, file_name=photo['file_name'])
+                    attachment_results.append(photo['file_name'])
+                os.unlink(tmp_file.name)
+            except Exception as e:
+                logger.error(f"Failed to upload photo {photo['file_name']} to Asana: {e}")
         task_url = f"https://app.asana.com/0/{project_id}/{task['gid']}"
         query.edit_message_text(f"✅ Task created: {task_url}")
         store['active'] = False
